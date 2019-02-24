@@ -1,0 +1,11 @@
+POST http://localhost:8080/login
+Content-Type: application/json
+
+{"user" : "test", "password": "test"}
+
+> {%
+client.assert(typeof response.body.token !== "undefined", "No token returned");
+client.global.set("auth_token", response.body.token);
+%}
+
+###
