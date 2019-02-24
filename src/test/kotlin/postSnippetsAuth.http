@@ -2,6 +2,6 @@ POST http://localhost:8080/snippets
 Content-Type: application/json
 Authorization: Bearer {{auth_token}}
 
-{"snippet":  {"text":  "a snippet with jwt auth"}}
+{"snippet":  {"text":  "Alice's snippet"}}
 
 ###

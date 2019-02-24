@@ -1,26 +1,72 @@
-import com.auth0.jwt.JWT
-import com.auth0.jwt.algorithms.Algorithm
-import com.fasterxml.jackson.databind.SerializationFeature
+import com.auth0.jwt.*
+import com.auth0.jwt.algorithms.*
+import com.fasterxml.jackson.databind.*
 import io.ktor.application.*
-import io.ktor.auth.Authentication
-import io.ktor.auth.UserIdPrincipal
-import io.ktor.auth.authenticate
-import io.ktor.auth.jwt.jwt
-import io.ktor.features.CallLogging
-import io.ktor.features.ContentNegotiation
+import io.ktor.auth.*
+import io.ktor.auth.jwt.*
+import io.ktor.features.*
+import io.ktor.http.HttpStatusCode
 import io.ktor.jackson.jackson
 import io.ktor.request.receive
 import io.ktor.response.*
 import io.ktor.routing.*
-import io.ktor.server.engine.*
-import io.ktor.server.netty.*
+import io.ktor.server.engine.embeddedServer
+import io.ktor.server.netty.Netty
 import java.util.Collections
 
-data class Snippet(val text: String)
+fun main() {
+    embeddedServer(Netty, 8080, watchPaths = listOf("MainKt"), module = Application::module).start()
+}
+
+fun Application.module() {
+    val simpleJwt = SimpleJWT("my-super-secret-for-jwt")
+    install(CallLogging)
+    install(ContentNegotiation) {
+        jackson {
+            enable(SerializationFeature.INDENT_OUTPUT) // Pretty Prints the JSON
+        }
+    }
+    install(Authentication) {
+        jwt {
+            verifier(simpleJwt.verifier)
+            validate {
+                UserIdPrincipal(it.payload.getClaim("name").asString())
+            }
+        }
+    }
+    install(StatusPages) {
+        exception<InvalidCredentialsException> { exception ->
+            call.respond(HttpStatusCode.Unauthorized, mapOf("OK" to false, "error" to (exception.message ?: "")))
+        }
+    }
+    routing {
+        post("/login") {
+            val post = call.receive<LoginRegister>()
+            val user = users.getOrPut(post.user) { User(post.user, post.password) }
+            if (user.password != post.password) throw InvalidCredentialsException("Invalid credentials")
+            call.respond(mapOf("token" to simpleJwt.sign(user.name)))
+        }
+        route("/snippets") {
+            get {
+                call.respond(mapOf("snippets" to synchronized(snippets) { snippets.toList() }))
+            }
+            authenticate {
+                post {
+                    val post = call.receive<PostSnippet>()
+                    val principal = call.principal<UserIdPrincipal>() ?: error("No principal")
+                    snippets += Snippet(principal.name, post.snippet.text)
+                    call.respond(mapOf("OK" to true))
+                }
+            }
+        }
+    }
+}
+
+data class Snippet(val user: String, val text: String)
 
 val snippets = Collections.synchronizedList(mutableListOf(
-    Snippet("hello"),
-    Snippet("world")
+    Snippet("init", "hello"),
+    Snippet("init", "world")
 ))
 
 data class PostSnippet(val snippet: PostSnippet.Text) {
@@ -43,44 +89,4 @@ val users = Collections.synchronizedMap(
 
 class LoginRegister(val user: String, val password: String)
 
-fun Application.module() {
-    val simpleJwt = SimpleJWT("my-super-secret-for-jwt")
-    install(CallLogging)
-    install(ContentNegotiation) {
-        jackson {
-            enable(SerializationFeature.INDENT_OUTPUT) // Pretty Prints the JSON
-        }
-    }
-    install(Authentication) {
-        jwt {
-            verifier(simpleJwt.verifier)
-            validate {
-                UserIdPrincipal(it.payload.getClaim("name").asString())
-            }
-        }
-    }
-    routing {
-        post("/login") {
-            val post = call.receive<LoginRegister>()
-            val user = users.getOrPut(post.user) { User(post.user, post.password) }
-            if (user.password != post.password) error("Invalid credentials")
-            call.respond(mapOf("token" to simpleJwt.sign(user.name)))
-        }
-        route("/snippets") {
-            get {
-                call.respond(mapOf("snippets" to synchronized(snippets) { snippets.toList() }))
-            }
-            authenticate {
-                post {
-                    val post = call.receive<PostSnippet>()
-                    snippets += Snippet(post.snippet.text)
-                    call.respond(mapOf("OK" to true))
-                }
-            }
-        }
-    }
-}
-
-fun main() {
-    embeddedServer(Netty, 8080, watchPaths = listOf("MainKt"), module = Application::module).start()
-}
+class InvalidCredentialsException(message: String) : RuntimeException(message)

@@ -1,0 +1,5 @@
+GET {{host}}
+
+> scripts/clearClientGlobal.js
+
+###
